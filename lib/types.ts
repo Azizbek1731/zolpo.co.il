@@ -93,6 +93,16 @@ export interface CategoryMenuItem {
   productCount: number;
   /** True when this category also earned a homepage row in the current plan. */
   featured: boolean;
+  /**
+   * The category's best seller, so the menu can show a thumbnail instead of a
+   * wall of text. `imageUrl` is present in live mode; otherwise the drawer draws
+   * the same generated art the product cards use.
+   */
+  preview?: {
+    kind: ProductKind;
+    colorHex: string;
+    imageUrl?: string;
+  };
 }
 
 export interface CategoryMenu {

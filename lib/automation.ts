@@ -169,20 +169,30 @@ export function buildCategoryMenu(
     titleHe: catalog.parentCategoryName,
     url: catalog.parentCategoryUrl,
     linksHe: MENU_LINKS_HE,
-    items: catalog.categories.map((category) => ({
-      id: category.id,
-      label: category.name,
-      url: category.url,
-      brand: category.brand,
-      segment: category.segment,
-      season: category.season,
-      // The live adapter only fetches the top few products per category, so its
-      // own `count` is the only honest number to show in the navigation.
-      productCount:
-        category.productCount ??
-        catalog.products.filter((p) => p.categoryIds.includes(category.id)).length,
-      featured: featuredIds.has(category.id),
-    })),
+    items: catalog.categories.map((category) => {
+      const inCategory = catalog.products.filter((p) =>
+        p.categoryIds.includes(category.id),
+      );
+      // Best seller doubles as the category's thumbnail — same rule as the rows,
+      // so the menu picture matches what the shopper lands on.
+      const hero = [...inCategory].sort(bySalesDesc)[0];
+
+      return {
+        id: category.id,
+        label: category.name,
+        url: category.url,
+        brand: category.brand,
+        segment: category.segment,
+        season: category.season,
+        // The live adapter only fetches the top few products per category, so the
+        // store's own `count` is the only honest number to show in navigation.
+        productCount: category.productCount ?? inCategory.length,
+        featured: featuredIds.has(category.id),
+        preview: hero
+          ? { kind: hero.kind, colorHex: hero.colorHex, imageUrl: hero.imageUrl }
+          : undefined,
+      };
+    }),
   };
 }
 
