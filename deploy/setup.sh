@@ -36,6 +36,22 @@ fi
 cd "$APP_DIR"
 echo "    $(git log --oneline -1)"
 
+# Bash keeps executing the copy of this file that existed when it started, so a
+# checkout that ships a *different* deploy strategy would be ignored — that is how
+# a stale Docker-era script once redeployed on top of a pm2 install, installed
+# Docker on a 90%-full disk and repointed nginx at the wrong port. Re-exec
+# whenever the pull changed this script (or when we were piped in via curl and
+# have no file to compare against).
+if [ "${ZOLPO_REEXEC:-}" != "1" ]; then
+  SELF_NOW=""
+  [ -r "${BASH_SOURCE[0]:-}" ] && SELF_NOW="$(sha256sum "${BASH_SOURCE[0]}" | cut -d" " -f1)"
+  SELF_REPO="$(sha256sum "$APP_DIR/deploy/setup.sh" | cut -d" " -f1)"
+  if [ "$SELF_NOW" != "$SELF_REPO" ]; then
+    say "This script changed in the checkout — re-running the new one"
+    exec env ZOLPO_REEXEC=1 bash "$APP_DIR/deploy/setup.sh" "$@"
+  fi
+fi
+
 say "Installing dependencies"
 npm ci --no-audit --no-fund --silent
 
