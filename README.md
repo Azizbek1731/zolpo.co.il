@@ -244,38 +244,43 @@ if you want live WooCommerce data.
 docker compose up --build -d      # http://localhost:3000
 ```
 
-The image uses Next.js standalone output and runs as a non-root user.
+The image uses Next.js standalone output and runs as a non-root user. This is the
+portable option; the live demo uses the pm2 path below because that host already
+runs its other sites that way.
 
-### Self-hosted (VPS + nginx)
+### Self-hosted (VPS + nginx) — this is how the live demo runs
 
-```bash
-npm ci && npm run build
-pm2 start npm --name zolpo-demo -- start
-pm2 save
-```
-
-nginx site for a subdomain:
-
-```nginx
-server {
-    server_name demo.zolpo.co.il;
-
-    location / {
-        proxy_pass         http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header   Upgrade $http_upgrade;
-        proxy_set_header   Connection 'upgrade';
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP $remote_addr;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-```
+The demo is live at **https://zolpo.pro100.cyou** on an Ubuntu host that already
+serves several other sites from `/home/ubuntu/<app>` under pm2, so it follows that
+pattern rather than introducing Docker (the box has ~3 GB of disk headroom and 2 GB
+of RAM shared with Postgres, Redis and three other apps).
 
 ```bash
-sudo certbot --nginx -d demo.zolpo.co.il
+bash deploy/setup.sh
+```
+
+`deploy/setup.sh` is idempotent — re-run it to ship a new commit. It pulls `main`,
+builds with the Node heap capped so the neighbouring services keep their memory,
+assembles the `output: "standalone"` bundle, deletes the ~500 MB build-time
+dependency tree, restarts the pm2 process, and adds the nginx site plus a
+certificate only if they are not already there. It never touches another site's
+server block.
+
+What it leaves behind:
+
+| | |
+| --- | --- |
+| App | `/home/ubuntu/zolpo`, ~50 MB after the prune |
+| Process | pm2 `zolpo` on `127.0.0.1:3200`, restored on boot by `pm2-ubuntu.service` |
+| nginx | `/etc/nginx/sites-available/zolpo`, TLS block managed by certbot |
+| Certificate | Let's Encrypt, renewed by `certbot.timer` |
+
+Useful commands on the server:
+
+```bash
+pm2 logs zolpo --lines 50
+pm2 restart zolpo
+sudo certbot certificates
 ```
 
 ### Environment variables

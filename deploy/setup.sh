@@ -1,93 +1,94 @@
 #!/usr/bin/env bash
-# Bootstrap the Zolpo demo on an Ubuntu/Debian host that may already be serving
-# other sites. Idempotent — safe to re-run, and it never touches an nginx server
-# block it did not create.
+# Deploy the Zolpo demo on an Ubuntu host with Node + pm2 + nginx.
 #
+# Written against the target box, which already serves four other sites from
+# /home/ubuntu/<app> under pm2 with certbot-managed nginx — so this follows that
+# house pattern instead of introducing Docker. It is idempotent: re-run it to
+# ship a new commit.
+#
+#   bash deploy/setup.sh
+# or, first time on a clean box:
 #   curl -fsSL https://raw.githubusercontent.com/Azizbek1731/zolpo.co.il/main/deploy/setup.sh | bash
 set -euo pipefail
 
 REPO="${REPO:-https://github.com/Azizbek1731/zolpo.co.il.git}"
-APP_DIR="${APP_DIR:-/opt/zolpo}"
+APP_DIR="${APP_DIR:-$HOME/zolpo}"
+APP_NAME="${APP_NAME:-zolpo}"
 DOMAIN="${DOMAIN:-zolpo.pro100.cyou}"
 EMAIL="${EMAIL:-azizbekatoyev13@gmail.com}"
+PORT="${PORT:-3200}"
+# The box has ~2 GB of RAM shared with Postgres, Redis and three other apps.
+HEAP_MB="${HEAP_MB:-1024}"
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m    %s\033[0m\n' "$*"; }
 
-say "Installing prerequisites"
-sudo apt-get update -qq
-sudo apt-get install -y -qq ca-certificates curl git nginx
+command -v node >/dev/null || { echo "node is required"; exit 1; }
+command -v pm2  >/dev/null || { echo "pm2 is required: npm i -g pm2"; exit 1; }
 
-if ! command -v docker >/dev/null 2>&1; then
-  say "Installing Docker"
-  curl -fsSL https://get.docker.com | sudo sh
-  sudo usermod -aG docker "$USER" || true
-fi
-
-say "Fetching the app into $APP_DIR"
+say "Fetching $REPO into $APP_DIR"
 if [ -d "$APP_DIR/.git" ]; then
-  sudo git -C "$APP_DIR" fetch --quiet --all
-  sudo git -C "$APP_DIR" reset --quiet --hard origin/main
+  git -C "$APP_DIR" fetch -q --all
+  git -C "$APP_DIR" reset -q --hard origin/main
 else
-  sudo git clone --quiet "$REPO" "$APP_DIR"
+  git clone -q "$REPO" "$APP_DIR"
 fi
 cd "$APP_DIR"
+echo "    $(git log --oneline -1)"
 
-# The host already runs other sites, so 3000 may be taken. Claim the first free
-# port and carry the same value into the nginx upstream.
-APP_PORT="${APP_PORT:-}"
-if [ -z "$APP_PORT" ]; then
-  for p in $(seq 3000 3020); do
-    if ! (sudo ss -ltn "sport = :$p" 2>/dev/null | grep -q LISTEN); then APP_PORT="$p"; break; fi
-  done
-fi
-[ -n "$APP_PORT" ] || { echo "no free port in 3000-3020"; exit 1; }
-say "Using host port $APP_PORT"
-echo "APP_PORT=$APP_PORT" | sudo tee "$APP_DIR/.env" >/dev/null
+say "Installing dependencies"
+npm ci --no-audit --no-fund --silent
 
-say "Building and starting the container"
-sudo docker compose --env-file "$APP_DIR/.env" up -d --build
+say "Building (heap capped at ${HEAP_MB}MB so the other services keep their RAM)"
+NODE_OPTIONS="--max-old-space-size=$HEAP_MB" npm run build
 
-say "Waiting for the app to answer on :$APP_PORT"
-for i in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:$APP_PORT/api/homepage?rows=3" >/dev/null 2>&1; then
-    echo "    app is up"; break
-  fi
-  [ "$i" = 60 ] && { echo "app did not start"; sudo docker compose logs --tail=60; exit 1; }
+# `output: "standalone"` emits a self-contained server plus a minimal node_modules;
+# the static assets and public/ have to be placed next to it by hand.
+say "Assembling the standalone bundle"
+rm -rf .next/standalone/public .next/standalone/.next/static
+cp -r public .next/standalone/
+mkdir -p .next/standalone/.next
+cp -r .next/static .next/standalone/.next/
+# Reclaim ~500 MB: the build-time dependency tree is not needed at runtime.
+rm -rf node_modules
+echo "    bundle: $(du -sh .next/standalone | cut -f1)"
+
+say "Restarting $APP_NAME on :$PORT under pm2"
+pm2 delete "$APP_NAME" >/dev/null 2>&1 || true
+PORT="$PORT" HOSTNAME=127.0.0.1 NODE_ENV=production \
+  pm2 start .next/standalone/server.js --name "$APP_NAME" --time >/dev/null
+pm2 save --force >/dev/null
+
+for i in $(seq 1 30); do
+  curl -fsS -o /dev/null "http://127.0.0.1:$PORT/api/homepage?rows=3" && { echo "    app is up"; break; }
+  [ "$i" = 30 ] && { echo "app did not start"; pm2 logs "$APP_NAME" --lines 40 --nostream; exit 1; }
   sleep 2
 done
 
-say "Adding the nginx site for $DOMAIN"
-sudo cp deploy/nginx-zolpo.conf /etc/nginx/sites-available/zolpo
-sudo sed -i "s/__DOMAIN__/$DOMAIN/g; s/__APP_PORT__/$APP_PORT/g" /etc/nginx/sites-available/zolpo
-sudo ln -sf /etc/nginx/sites-available/zolpo /etc/nginx/sites-enabled/zolpo
-sudo mkdir -p /var/www/html
-# Deliberately NOT removing sites-enabled/default or any other site.
-sudo nginx -t && sudo systemctl reload nginx
-
-say "Checking DNS before asking Let's Encrypt for a certificate"
-SERVER_IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com | tr -d '[:space:]' || echo unknown)"
-DOMAIN_IP="$(getent hosts "$DOMAIN" | awk '{print $1; exit}' || true)"
-echo "    this server : ${SERVER_IP:-unknown}"
-echo "    $DOMAIN -> ${DOMAIN_IP:-not resolving}"
-
-if [ -n "${DOMAIN_IP:-}" ] && [ "$SERVER_IP" = "$DOMAIN_IP" ]; then
-  say "Issuing the certificate"
-  sudo apt-get install -y -qq certbot python3-certbot-nginx
-  sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" --redirect
-  sudo systemctl reload nginx
-  printf '\n\033[1;32m    Done: https://%s\033[0m\n\n' "$DOMAIN"
+if [ ! -e /etc/nginx/sites-enabled/"$APP_NAME" ]; then
+  say "Adding the nginx site for $DOMAIN"
+  sudo sed "s/__DOMAIN__/$DOMAIN/g; s/__APP_PORT__/$PORT/g" deploy/nginx-zolpo.conf \
+    | sudo tee /etc/nginx/sites-available/"$APP_NAME" >/dev/null
+  sudo ln -sf /etc/nginx/sites-available/"$APP_NAME" /etc/nginx/sites-enabled/"$APP_NAME"
+  # Deliberately never touching sites-enabled/default or any other site.
+  sudo nginx -t && sudo systemctl reload nginx
 else
-  warn ""
-  warn "DNS does not point here yet, so the certificate step was skipped."
-  warn "Add this record at your DNS provider (ahost.uz):"
-  warn ""
-  warn "    Type A   Name zolpo   Value ${SERVER_IP:-THIS_SERVER_IP}   TTL 300"
-  warn ""
-  warn "Then re-run this same command — it will pick up where it left off."
-  warn ""
-  warn "The app is already running behind nginx; until DNS resolves you can only"
-  warn "reach it by sending the host header yourself:"
-  warn "    curl -H 'Host: $DOMAIN' http://${SERVER_IP:-127.0.0.1}/"
-  warn ""
+  say "nginx site already present, leaving it alone (certbot manages the TLS block)"
 fi
+
+if sudo test -d "/etc/letsencrypt/live/$DOMAIN"; then
+  say "Certificate already issued — certbot.timer handles renewal"
+else
+  SERVER_IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com | tr -d '[:space:]' || echo '')"
+  DOMAIN_IP="$(getent hosts "$DOMAIN" | awk '{print $1; exit}' || true)"
+  if [ -n "$DOMAIN_IP" ] && [ "$SERVER_IP" = "$DOMAIN_IP" ]; then
+    say "Issuing the certificate"
+    sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "$EMAIL" --redirect
+    sudo systemctl reload nginx
+  else
+    warn "DNS points at ${DOMAIN_IP:-nothing}, this host is ${SERVER_IP:-unknown} — skipping certbot."
+    warn "Add:  A   ${DOMAIN%%.*}   $SERVER_IP   TTL 300   then re-run this script."
+  fi
+fi
+
+printf '\n\033[1;32m==> https://%s\033[0m\n\n' "$DOMAIN"
