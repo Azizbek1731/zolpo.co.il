@@ -1,26 +1,94 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-he: var(--font-assistant);
+  --font-latin: var(--font-inter);
+
+  /* Palette lifted from the live zolpo.co.il homepage. */
+  --color-zolpo-red: #e21b1b;
+  --color-zolpo-red-dark: #b41414;
+  --color-zolpo-ink: #16181d;
+  --color-zolpo-charcoal: #23262e;
+  --color-zolpo-price: #16a34a;
+  --color-zolpo-sand: #efe7db;
+  --color-zolpo-sand-dark: #ddd0bd;
+  --color-zolpo-line: #e6e8ec;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #16181d;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-he), var(--font-latin), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-latin {
+  font-family: var(--font-latin), system-ui, sans-serif;
+}
+
+/* The one Hebrew text utility, used on both the shop and inside the LTR console.
+   Three things always travel together:
+     - the Hebrew family, because Inter has no Hebrew coverage and the client would
+       otherwise see their own product names in two different typefaces;
+     - an explicit RTL base, because several real category names open with a Latin
+       brand token (`UGG נעלי האג`, `BOSS הוגו בוס`) and anything that auto-detects
+       direction from the first strong character flips the whole line to LTR base,
+       reordering the words for a Hebrew reader;
+     - isolation, so the embedded Latin run cannot reorder its neighbours. */
+.he {
+  font-family: var(--font-he), system-ui, sans-serif;
+  direction: rtl;
+  unicode-bidi: isolate;
+}
+
+/* Product art: colours arrive as CSS variables so every card stays independent
+   (a scoped <style> inside each <svg> would leak across the page). */
+.product-art .fill {
+  fill: var(--art-fill);
+  stroke: var(--art-stroke);
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+.product-art .fill2 {
+  fill: var(--art-accent);
+  stroke: var(--art-stroke);
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+.product-art .line {
+  fill: none;
+  stroke: var(--art-stroke);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  opacity: 0.75;
+}
+.product-art .strap {
+  fill: none;
+  stroke: var(--art-strap);
+  stroke-width: 11;
+  stroke-linecap: round;
+}
+.product-art .band {
+  fill: none;
+  stroke: var(--art-fill);
+  stroke-width: 22;
+}
+.product-art .dot {
+  fill: var(--art-stroke);
+  opacity: 0.65;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

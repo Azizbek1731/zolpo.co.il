@@ -1,0 +1,15 @@
+services:
+  zolpo-demo:
+    build: .
+    image: zolpo-homepage-automation
+    container_name: zolpo-demo
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Leave the WooCommerce vars unset to run on the built-in mock catalog.
+      WC_BASE_URL: ${WC_BASE_URL:-}
+      WC_CONSUMER_KEY: ${WC_CONSUMER_KEY:-}
+      WC_CONSUMER_SECRET: ${WC_CONSUMER_SECRET:-}
+      VIDEOS_PAGE_URL: ${VIDEOS_PAGE_URL:-/videos}
+      DEFAULT_SEASON: ${DEFAULT_SEASON:-auto}
